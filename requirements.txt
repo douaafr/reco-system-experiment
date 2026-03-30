@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+scikit-learn
+anthropic
+requests
+gspread
+google-auth
