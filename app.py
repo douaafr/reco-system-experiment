@@ -14,9 +14,6 @@ from datetime import datetime
 import ast
 import json
 
-# ──────────────────────────────────────────────
-# CONFIGURATION DE LA PAGE
-# ──────────────────────────────────────────────
 st.set_page_config(
     page_title="Étude sur les recommandations de films",
     page_icon="🎬",
@@ -24,19 +21,17 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────
-# 1. CHARGEMENT ET PRÉPARATION DES DONNÉES
+# 1. DONNÉES
 # ──────────────────────────────────────────────
 @st.cache_data
 def load_data():
     df = pd.read_csv("tmdb_5000_movies.csv")
-
     def extract_names(json_str, key="name", limit=5):
         try:
             items = ast.literal_eval(json_str)
             return " ".join([item[key] for item in items[:limit]])
         except:
             return ""
-
     df["genres_clean"]   = df["genres"].apply(lambda x: extract_names(x))
     df["keywords_clean"] = df["keywords"].apply(lambda x: extract_names(x))
     df["overview"]       = df["overview"].fillna("")
@@ -47,17 +42,14 @@ def load_data():
     df = df[df["genres_clean"] != ""].reset_index(drop=True)
     return df
 
-
 @st.cache_data
 def build_similarity_matrix(df):
     tfidf        = TfidfVectorizer(stop_words="english")
     tfidf_matrix = tfidf.fit_transform(df["features"])
     return cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-
 @st.cache_data
 def get_tmdb_info(movie_id):
-    """Récupère affiche + titre français en un seul appel TMDB."""
     try:
         api_key = st.secrets.get("TMDB_API_KEY", "")
         if not api_key:
@@ -71,10 +63,8 @@ def get_tmdb_info(movie_id):
     except:
         return None, None
 
-
 @st.cache_data
 def get_french_titles_bulk(movie_ids_tuple):
-    """Récupère les titres français pour une liste de films (dict {movie_id: titre_fr})."""
     api_key = st.secrets.get("TMDB_API_KEY", "")
     if not api_key:
         return {}
@@ -91,7 +81,6 @@ def get_french_titles_bulk(movie_ids_tuple):
             pass
     return result
 
-
 # ──────────────────────────────────────────────
 # 2. ALGORITHME DE RECOMMANDATION
 # ──────────────────────────────────────────────
@@ -99,15 +88,12 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
     indices     = pd.Series(df.index, index=df["title"]).drop_duplicates()
     sim_scores  = np.zeros(len(df))
     found_count = 0
-
     for film in liked_films:
         if film in indices:
             sim_scores  += cosine_sim[indices[film]]
             found_count += 1
-
     if found_count == 0:
         return []
-
     sim_scores    = sim_scores / found_count
     liked_indices = [indices[f] for f in liked_films if f in indices]
     sim_series    = pd.Series(sim_scores).drop(liked_indices, errors="ignore")
@@ -131,7 +117,6 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
         film_keywords   = set(film["keywords_clean"].split())
         common_genres   = user_genres   & film_genres
         common_keywords = user_keywords & film_keywords
-
         reasons = []
         if common_genres:
             reasons.append(f"genres communs : {', '.join(list(common_genres)[:3])}")
@@ -139,9 +124,7 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
             reasons.append(f"thèmes similaires : {', '.join(list(common_keywords)[:3])}")
         if not reasons:
             reasons.append(f"style similaire (genres : {film['genres_clean']})")
-
         movie_id = int(film["id"]) if "id" in df.columns else None
-
         recommendations.append({
             "title":           film["title"],
             "genres":          film["genres_clean"],
@@ -156,69 +139,96 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
             "correct_reason":  reasons[0],
             "movie_id":        movie_id,
         })
-
     return recommendations
 
-
 # ──────────────────────────────────────────────
-# 3. GÉNÉRATION EXPLICATION + QCM PAR L'IA
+# 3. GÉNÉRATION EXPLICATION + QCM
 # ──────────────────────────────────────────────
 def generate_explanation_and_qcm(film, liked_films):
-    """
-    Claude génère en une fois :
-    - Une explication courte et naturelle (longueur variable, 1-2 phrases)
-    - La bonne réponse QCM spécifique au film
-    - Deux distracteurs plausibles mais faux
-    """
+    import time
     client     = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
     liked_text = ", ".join(liked_films[:5])
     overviews  = "\n".join(film["liked_overviews"][:3])
 
     context = []
     if film["common_genres"]:
-        context.append(f"Genres communs : {film['common_genres']}")
+        context.append(f"Genres communs avec les films aimés : {film['common_genres']}")
     if film["common_keywords"]:
-        context.append(f"Thèmes communs : {film['common_keywords']}")
+        context.append(f"Mots-clés/thèmes communs : {film['common_keywords']}")
     if film["overview"]:
-        context.append(f"Synopsis : {film['overview'][:250]}")
+        context.append(f"Synopsis du film recommandé : {film['overview'][:300]}")
     if film["tagline"]:
         context.append(f"Tagline : {film['tagline']}")
+    if film["vote_average"]:
+        context.append(f"Note : {film['vote_average']}/10")
 
-    prompt = f"""Tu es un assistant de recommandation de films.
+    prompt = f"""Tu es un expert en analyse cinématographique et en recommandation personnalisée.
 
-Films aimés par l'utilisateur : {liked_text}
-Synopses des films aimés : {overviews}
+--- PROFIL DE L'UTILISATEUR ---
+Films aimés : {liked_text}
 
-Film recommandé : {film['title']}
+Synopses des films aimés :
+{overviews}
+
+--- FILM RECOMMANDÉ ---
+Titre : {film['title']}
 {chr(10).join(context)}
+
+--- TA TÂCHE ---
+Génère une explication de recommandation personnalisée en 3 temps :
+
+TEMPS 1 — Analyse du profil (ne pas afficher) :
+Identifie ce qui caractérise vraiment les goûts de cet utilisateur :
+thèmes récurrents, style narratif, atmosphère, émotions recherchées.
+
+TEMPS 2 — Connexion avec le film (ne pas afficher) :
+Trouve les ponts réels entre ce film et le profil : narratifs, thématiques, stylistiques.
+Ne pas répéter les genres mécaniquement.
+
+TEMPS 3 — Rédige l'explication finale :
+- 3 à 4 phrases naturelles en français, à la deuxième personne (vous)
+- Commence par : "Au vu de vos films, vous semblez apprécier [caractéristique précise]..."
+- Puis explique le lien avec ce film spécifique
+- Mentionne au moins un film aimé par son nom
+- Ne liste jamais les genres bruts, ne raconte pas le synopsis
 
 Génère UNIQUEMENT ce JSON valide (sans markdown, sans texte autour) :
 {{
-  "explanation": "1 à 2 phrases maximum en français, à la deuxième personne (vous), commençant par 'Ce film vous est recommandé car...'. Identifie la vraie connexion thématique ou narrative. Sois naturel et concis, varie la longueur.",
-  "correct": "Phrase courte (max 12 mots) résumant la vraie raison. Ex: 'Pour ses thèmes de...' ou 'En raison de sa...'",
-  "wrong1": "Distacteur plausible mais faux et spécifique à ce film. Max 12 mots.",
-  "wrong2": "Autre distacteur crédible et différent. Max 12 mots."
+  "explanation": "Ton explication ici (3-4 phrases, commence par l'analyse du profil)",
+  "correct": "Phrase courte (max 15 mots) résumant la vraie connexion. Ex: 'Pour son atmosphère [X] et ses thèmes de [Y], similaires à [film aimé]'",
+  "wrong1": "Distracteur plausible mais faux, spécifique à ce film. Max 15 mots.",
+  "wrong2": "Autre distracteur crédible et différent. Max 15 mots."
 }}"""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=350,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    try:
-        return json.loads(message.content[0].text)
-    except:
-        return {
-            "explanation": message.content[0].text[:300],
-            "correct":     film["correct_reason"],
-            "wrong1":      "Parce qu'il est très populaire en ce moment",
-            "wrong2":      "Parce qu'il correspond à votre tranche d'âge"
-        }
-
+    for attempt in range(3):
+        try:
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=600,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            try:
+                return json.loads(message.content[0].text)
+            except:
+                return {
+                    "explanation": message.content[0].text[:300],
+                    "correct":     film["correct_reason"],
+                    "wrong1":      "Parce qu'il est très populaire en ce moment",
+                    "wrong2":      "Parce qu'il correspond à votre tranche d'âge"
+                }
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2)
+            else:
+                return {
+                    "explanation": "Ce film vous est recommandé en raison de ses similarités avec vos préférences.",
+                    "correct":     film["correct_reason"],
+                    "wrong1":      "Parce qu'il est très populaire en ce moment",
+                    "wrong2":      "Parce qu'il correspond à votre tranche d'âge"
+                }
 
 # ──────────────────────────────────────────────
-# 4. SAUVEGARDE DES RÉPONSES
+# 4. SAUVEGARDE
 # ──────────────────────────────────────────────
 SHEET_COLUMNS = [
     "participant_id", "timestamp",
@@ -229,27 +239,56 @@ SHEET_COLUMNS = [
     "films_aimes"
 ]
 
+PROFILE_COLUMNS = [
+    "participant_id", "timestamp_profil",
+    "age", "profession", "pays",
+    "frequence_streaming", "connaissance_algo",
+    "email_contact"
+]
+
+PRE_COLUMNS = [
+    "participant_id", "timestamp_pre",
+    "pre_utilise_reco", "pre_confiance_reco", "pre_comprend_reco", "pre_importance_explication"
+]
+
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1uX8KhfH4FcVKGXso8OG0nEEm8pn_GP6PjvltYbSF9UI/edit"
 
-def get_sheet():
-    """Connexion au Google Sheet via le compte de service."""
+def get_sheet(sheet_index=0):
     scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds  = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     client = gspread.authorize(creds)
-    return client.open_by_url(SHEET_URL).sheet1
+    wb     = client.open_by_url(SHEET_URL)
+    sheets = wb.worksheets()
+    return sheets[sheet_index] if sheet_index < len(sheets) else sheets[0]
 
 def save_response(data):
-    """Sauvegarde une ligne dans Google Sheets — permanent et en temps réel."""
     try:
-        sheet = get_sheet()
+        sheet = get_sheet(0)
         row   = [str(data.get(col, "")) for col in SHEET_COLUMNS]
         sheet.append_row(row, value_input_option="RAW")
     except Exception as e:
-        st.warning(f"⚠️ Erreur de sauvegarde Google Sheets : {e}")
+        st.warning(f"⚠️ Erreur sauvegarde : {e}")
+
+def save_profile(data):
+    try:
+        sheet = get_sheet(1)
+        row   = [str(data.get(col, "")) for col in PROFILE_COLUMNS]
+        sheet.append_row(row, value_input_option="RAW")
+    except Exception as e:
+        st.warning(f"⚠️ Erreur sauvegarde profil : {e}")
+
+def save_pre(data):
+    try:
+        sheet = get_sheet(2)
+        row   = [str(data.get(col, "")) for col in PRE_COLUMNS]
+        sheet.append_row(row, value_input_option="RAW")
+    except Exception as e:
+        st.warning(f"⚠️ Erreur sauvegarde pré-questionnaire : {e}")
+
 
 
 # ──────────────────────────────────────────────
-# 5. INTERFACE STREAMLIT
+# 5. INTERFACE
 # ──────────────────────────────────────────────
 def main():
     defaults = {
@@ -269,7 +308,7 @@ def main():
         df         = load_data()
         cosine_sim = build_similarity_matrix(df)
     except FileNotFoundError:
-        st.error("❌ Fichier **tmdb_5000_movies.csv** introuvable. Placez-le dans le même dossier que app.py.")
+        st.error("❌ Fichier **tmdb_5000_movies.csv** introuvable.")
         st.stop()
 
     # ── ACCUEIL ──────────────────────────────────
@@ -278,43 +317,135 @@ def main():
         st.markdown("""
 Bienvenue et merci de participer à cette étude !
 
-Cette recherche est conduite au sein du **Centre de Recherche en Informatique (CRI)**
-de l'Université Paris 1 Panthéon-Sorbonne. Elle vise à mieux comprendre comment
-les utilisateurs perçoivent et évaluent les recommandations générées par une IA dans un système de recommandation.
+Cette recherche est conduite au sein de l'Université Paris 1 Panthéon-Sorbonne.
+Elle vise à mieux comprendre comment
+les utilisateurs perçoivent et évaluent les recommandations générées par une IA.
 
-**Durée estimée : 6 à 8 minutes**
+**Durée estimée : 8 à 10 minutes**
 
 **Déroulement :**
-1. Vous indiquez quelques films que vous avez aimés
-2. Le système vous propose **10 recommandations** personnalisées
-3. Après chaque recommandation, vous répondez à quelques questions courtes
+1. Quelques questions sur vos habitudes avec les systèmes de recommandation
+2. Vous indiquez des films que vous avez aimés
+3. Le système vous propose **6 recommandations** personnalisées
+4. Quelques questions sur votre profil
 
 🔑 **Vos réponses sont entièrement anonymes** et utilisées uniquement à des fins de recherche scientifique.
         """)
         st.session_state.participant_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        if st.button("Commencer l'étude →", type="primary", use_container_width=True):
-            st.session_state.step = "select_films"
+        if st.button("Commencer →", type="primary", use_container_width=True):
+            st.session_state.step = "pre_questionnaire"
             st.rerun()
+
+    # ── PRÉ-QUESTIONNAIRE ─────────────────────────
+    elif st.session_state.step == "pre_questionnaire":
+        st.title("❓Les systèmes de recommandation")
+        st.markdown("""
+Un **système de recommandation** est un algorithme qui analyse vos préférences pour vous suggérer
+automatiquement des contenus susceptibles de vous plaire — c'est ce que font Netflix, Spotify ou
+YouTube lorsqu'ils vous proposent des films, des musiques ou des vidéos "pour vous".
+
+Avant de commencer l'expérience, quelques questions sur votre rapport à ces systèmes.
+        """)
+        st.divider()
+
+        st.markdown("**Question 1 sur 4**")
+        st.markdown("###### Utilisez-vous des plateformes intégrant des systèmes de recommandation automatique ? (ex. Netflix, YouTube, Spotify, Amazon...)")
+        pre1 = st.radio(
+            "",
+            [
+                "Oui, quotidiennement",
+                "Oui, plusieurs fois par semaine",
+                "Occasionnellement",
+                "Non, je n'en utilise pas"
+            ],
+            index=None, key="pre1"
+        )
+
+        st.markdown("**Question 2 sur 4**")
+        st.markdown("###### De manière générale, dans quelle mesure faites-vous confiance aux recommandations proposées par ces systèmes ?")
+        pre2 = st.select_slider(
+            "",
+            options=[1, 2, 3, 4, 5],
+            value=3,
+            key="pre2",
+            format_func=lambda x: {
+                1: "1 — Aucune confiance",
+                2: "2 — Peu de confiance",
+                3: "3 — Confiance modérée",
+                4: "4 — Assez confiance",
+                5: "5 — Totale confiance"
+            }[x]
+        )
+
+        st.markdown("**Question 3 sur 4**")
+        st.markdown("###### Pensez-vous comprendre le fonctionnement des algorithmes qui génèrent ces recommandations ?")
+        pre3 = st.radio(
+            "",
+            [
+                "Oui, je comprends bien leur fonctionnement",
+                "J'en ai une idée générale, sans en maîtriser les détails",
+                "Je n'ai qu'une vague idée de leur fonctionnement",
+                "Non, je ne comprends pas comment ils fonctionnent"
+            ],
+            index=None, key="pre3"
+        )
+
+        st.markdown("**Question 4 sur 4**")
+        st.markdown("###### Selon vous, est-il important qu'un système de recommandation justifie ses suggestions en expliquant pourquoi un contenu vous est proposé ?")
+        pre4 = st.select_slider(
+            "",
+            options=[1, 2, 3, 4, 5],
+            value=3,
+            key="pre4",
+            format_func=lambda x: {
+                1: "1 — Pas du tout important",
+                2: "2 — Peu important",
+                3: "3 — Assez important",
+                4: "4 — Important",
+                5: "5 — Très important"
+            }[x]
+        )
+
+        st.divider()
+
+        if pre1 is None or pre3 is None:
+            st.warning("Veuillez répondre à toutes les questions avant de continuer.")
+        else:
+            if st.button("Continuer →", type="primary", use_container_width=True):
+                save_pre({
+                    "participant_id":             st.session_state.participant_id,
+                    "timestamp_pre":              datetime.now().isoformat(),
+                    "pre_utilise_reco":           pre1,
+                    "pre_confiance_reco":         pre2,
+                    "pre_comprend_reco":          pre3,
+                    "pre_importance_explication": pre4,
+                })
+                st.session_state.step = "select_films"
+                st.rerun()
 
     # ── SÉLECTION DES FILMS ───────────────────────
     elif st.session_state.step == "select_films":
         st.title("Vos films préférés")
-        st.write("Recherchez et sélectionnez entre **3 et 5 films** que vous avez aimés :")
-        st.caption("ℹ️ Les titres sont affichés en anglais (titre original international).")
+        st.markdown("""
+Dans cette étude, vous allez choisir quelques films que vous avez aimés.
+Un système de recommandation va ensuite vous proposer **6 films** susceptibles de vous plaire.
 
-        # Tous les films triés par popularité
+Pour chaque recommandation, vous aurez à répondre à quelques questions sur votre compréhension
+et votre ressenti vis-à-vis de la recommandation.
+
+⬆️ *Après chaque réponse, pensez à remonter en haut de page pour accéder à la recommandation suivante.*
+        """)
+        st.divider()
+        st.write("Sélectionnez entre **3 et 5 films** que vous avez aimés :")
+
         sorted_df  = df.sort_values("popularity", ascending=False).reset_index(drop=True)
 
-        # Charger les titres français pour les 300 films les plus populaires
         if "french_titles" not in st.session_state:
             with st.spinner("Chargement des films..."):
                 top_ids = tuple(int(i) for i in sorted_df["id"].head(300).tolist() if pd.notna(i))
                 st.session_state.french_titles = get_french_titles_bulk(top_ids)
 
         fr_titles = st.session_state.french_titles
-
-        # Construire la liste avec titres français quand disponibles
-        # On garde un mapping titre_affiché -> titre_original pour l'algo
         display_to_original = {}
         display_titles = []
         for _, row in sorted_df.head(300).iterrows():
@@ -323,7 +454,6 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
             display_to_original[title_fr] = row["title"]
             display_titles.append(title_fr)
 
-        # Dédoublonner
         seen = set()
         unique_display = []
         for t in display_titles:
@@ -339,20 +469,21 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
             max_selections=5,
             placeholder="Ex: Avatar, Titanic, Inception..."
         )
-        # Reconvertir en titres originaux pour l'algorithme
         selected = [display_to_original.get(t, t) for t in selected_display]
 
         if len(selected) >= 3:
             st.success(f"✅ {len(selected)} film(s) sélectionné(s)")
             if st.button("Voir mes recommandations →", type="primary", use_container_width=True):
                 with st.spinner("Calcul des recommandations..."):
-                    recs = get_recommendations(selected, df, cosine_sim, n=10)
-                if len(recs) < 6:
+                    recs = get_recommendations(selected, df, cosine_sim, n=6)
+                if len(recs) < 4:
                     st.warning("Pas assez de recommandations. Essayez d'autres films.")
                 else:
+                    flags = [True, True, True, False, False, False]
+                    random.shuffle(flags)
                     st.session_state.liked_films       = selected
                     st.session_state.recommendations   = recs
-                    st.session_state.explanation_order = [True, True, True, True, True, False, False, False, False, False]
+                    st.session_state.explanation_order = flags
                     st.session_state.current_film_idx  = 0
                     st.session_state.step              = "recommendations"
                     st.rerun()
@@ -364,21 +495,47 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
     # ── RECOMMANDATIONS + QUESTIONS ───────────────
     elif st.session_state.step == "recommendations":
         idx   = st.session_state.current_film_idx
-        total = 10
+        total = 6
 
         if idx >= total:
-            st.session_state.step = "finished"
+            st.session_state.step = "profile"
             st.rerun()
             return
 
         film             = st.session_state.recommendations[idx]
         show_explanation = st.session_state.explanation_order[idx]
 
-        st.progress(idx / total)
+        # ── Écran de chargement propre ──
+        if f"qcm_correct_{idx}" not in st.session_state:
+            st.progress((idx + 1) / total)
+            st.caption(f"Recommandation {idx + 1} sur {total}")
+            st.divider()
+            st.markdown(
+                """<div style="text-align:center;padding:40px 0;">
+                <div style="font-size:48px;">⏳</div>
+                <div style="font-size:20px;font-weight:bold;margin-top:12px;">
+                Chargement de la recommandation suivante...</div>
+                <div style="color:gray;margin-top:8px;">Merci de patienter quelques secondes</div>
+                </div>""",
+                unsafe_allow_html=True
+            )
+            try:
+                result = generate_explanation_and_qcm(film, st.session_state.liked_films)
+                st.session_state[f"expl_{idx}"]        = result["explanation"]
+                st.session_state[f"qcm_correct_{idx}"] = result["correct"]
+                st.session_state[f"qcm_wrong1_{idx}"]  = result["wrong1"]
+                st.session_state[f"qcm_wrong2_{idx}"]  = result["wrong2"]
+            except Exception as e:
+                st.error(f"Erreur API : {e}")
+                st.stop()
+            st.rerun()
+            return
+
+        # ── Affichage normal ──
+        st.progress((idx + 1) / total)
         st.caption(f"Recommandation {idx + 1} sur {total}")
         st.divider()
 
-        # ── Affichage du film avec affiche ──
         col_img, col_info = st.columns([1, 2])
         with col_img:
             if film["movie_id"]:
@@ -397,20 +554,6 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
             if film["vote_average"] > 0:
                 st.caption(f"⭐ {film['vote_average']}/10")
 
-        # ── Génération explication + QCM (une seule fois) ──
-        if f"qcm_correct_{idx}" not in st.session_state:
-            label = "Génération de l'explication..." if show_explanation else "Chargement..."
-            with st.spinner(label):
-                try:
-                    result = generate_explanation_and_qcm(film, st.session_state.liked_films)
-                    st.session_state[f"expl_{idx}"]        = result["explanation"]
-                    st.session_state[f"qcm_correct_{idx}"] = result["correct"]
-                    st.session_state[f"qcm_wrong1_{idx}"]  = result["wrong1"]
-                    st.session_state[f"qcm_wrong2_{idx}"]  = result["wrong2"]
-                except Exception as e:
-                    st.error(f"Erreur API : {e}")
-                    st.stop()
-
         if show_explanation:
             st.markdown("#### 🤖 Pourquoi ce film vous est recommandé")
             st.info(st.session_state[f"expl_{idx}"])
@@ -419,17 +562,16 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
             current_explanation = ""
 
         st.divider()
-        st.write("### Vos réponses")
+        st.write("### Votre réaction à cette recommandation")
 
-        # ── Compréhension perçue ──
-        st.write("**Compréhension perçue**")
         fmt = lambda x: {1: "1 — Pas du tout", 2: "2", 3: "3 — Moyennement", 4: "4", 5: "5 — Tout à fait"}[x]
+
+        st.write("**Compréhension perçue**")
         cp1 = st.select_slider("Je comprends pourquoi ce film m'a été recommandé.",
                                options=[1,2,3,4,5], value=3, key=f"cp1_{idx}", format_func=fmt)
         cp2 = st.select_slider("Je suis capable d'expliquer la logique de cette recommandation.",
                                options=[1,2,3,4,5], value=3, key=f"cp2_{idx}", format_func=fmt)
 
-        # ── Compréhension réelle (QCM fixe) ──
         st.write("**Test de compréhension**")
         if f"qcm_options_{idx}" not in st.session_state:
             correct = st.session_state[f"qcm_correct_{idx}"]
@@ -451,7 +593,6 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
                               options_display, key=f"cr_{idx}", index=None)
         real_correct = (cr_display == correct_display) if cr_display is not None else None
 
-        # ── Confiance ──
         st.write("**Confiance**")
         t1 = st.select_slider("Je fais confiance à cette recommandation.",
                                options=[1,2,3,4,5], value=3, key=f"t1_{idx}", format_func=fmt)
@@ -461,33 +602,102 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
                                options=[1,2,3,4,5], value=3, key=f"t3_{idx}", format_func=fmt)
 
         st.divider()
+        st.caption(f"Recommandation {idx + 1} sur {total}")
 
         if cr_display is None:
             st.warning("Veuillez répondre au test de compréhension avant de continuer.")
         else:
-            label = "Suivant →" if idx < total - 1 else "Terminer l'étude ✓"
-            if st.button(label, type="primary", use_container_width=True):
-                save_response({
-                    "participant_id":                st.session_state.participant_id,
-                    "timestamp":                     datetime.now().isoformat(),
-                    "film_numero":                   idx + 1,
-                    "film_titre":                    film["title"],
-                    "avec_explication":              show_explanation,
-                    "texte_explication":             current_explanation,
-                    "comprehension_percue_1":        cp1,
-                    "comprehension_percue_2":        cp2,
-                    "comprehension_reelle_bonne_reponse": st.session_state.get(f"qcm_correct_{idx}", ""),
-                    "comprehension_reelle_option_b":     st.session_state.get(f"qcm_wrong1_{idx}", ""),
-                    "comprehension_reelle_option_c":     st.session_state.get(f"qcm_wrong2_{idx}", ""),
+            label = "Suivant →" if idx < total - 1 else "Terminer les recommandations →"
+            clicked = st.button(label, type="primary", use_container_width=True)
+            if clicked:
+                with st.spinner("Chargement en cours..." if idx < total - 1 else "Finalisation..."):
+                    save_response({
+                    "participant_id":                    st.session_state.participant_id,
+                    "timestamp":                         datetime.now().isoformat(),
+                    "film_numero":                       idx + 1,
+                    "film_titre":                        film["title"],
+                    "avec_explication":                  show_explanation,
+                    "texte_explication":                 current_explanation,
+                    "comprehension_percue_1":            cp1,
+                    "comprehension_percue_2":            cp2,
+                    "comprehension_reelle_bonne_reponse":st.session_state.get(f"qcm_correct_{idx}", ""),
                     "comprehension_reelle_reponse":      cr_display,
                     "comprehension_reelle_correcte":     real_correct,
                     "confiance_1":                       t1,
                     "confiance_2":                       t2,
                     "confiance_3":                       t3,
-                    "score_confiance":                   round((t1 + t2 + t3) / 3, 2),
-                    "films_aimes":                   " | ".join(st.session_state.liked_films)
-                })
+                    "films_aimes":                       " | ".join(st.session_state.liked_films)
+                    })
                 st.session_state.current_film_idx += 1
+                st.rerun()
+
+    # ── PROFIL DÉMOGRAPHIQUE ──────────────────────
+    elif st.session_state.step == "profile":
+        st.title("👤Votre profil")
+        st.write("Dernière étape ! Quelques informations sur vous pour contextualiser les résultats de la recherche.")
+        st.divider()
+
+        st.markdown("**Votre tranche d'âge**")
+        age = st.radio("", [
+            "Moins de 18 ans", "18-24 ans", "25-34 ans",
+            "35-44 ans", "45-54 ans", "55 ans et plus"
+        ], index=None, key="age", horizontal=True)
+
+        st.markdown("**Votre situation professionnelle**")
+        profession = st.radio("", [
+            "Étudiant(e)",
+            "Salarié(e) / Cadre",
+            "Profession libérale / Indépendant(e)",
+            "Enseignant(e) / Chercheur(e)",
+            "Sans emploi",
+            "Retraité(e)",
+            "Autre"
+        ], index=None, key="profession")
+
+        st.markdown("**Votre pays de résidence**")
+        pays = st.radio("", [
+            "France",
+            "Autre pays européen",
+            "Pays non européen"
+        ], index=None, key="pays")
+
+        st.markdown("**Fréquence d'utilisation des plateformes de streaming** (Netflix, YouTube, Spotify...)")
+        frequence = st.radio("", [
+            "Tous les jours",
+            "Plusieurs fois par semaine",
+            "Une fois par semaine",
+            "Quelques fois par mois",
+            "Rarement ou jamais"
+        ], index=None, key="frequence")
+
+        st.markdown("**Connaissance des algorithmes de recommandation**")
+        connaissance = st.radio("", [
+            "Je ne sais pas du tout comment ça fonctionne",
+            "J'en ai une idée très vague",
+            "Je comprends les grandes lignes",
+            "J'ai de bonnes connaissances sur le sujet",
+            "Je suis expert(e) dans ce domaine"
+        ], index=None, key="connaissance")
+
+        st.divider()
+
+        all_filled = all([age, profession, pays, frequence, connaissance])
+
+        if not all_filled:
+            st.warning("Veuillez répondre à toutes les questions avant de continuer.")
+        else:
+            if st.button("Terminer l'étude ✓", type="primary", use_container_width=True):
+                save_profile({
+                    "participant_id":      st.session_state.participant_id,
+                    "timestamp_profil":    datetime.now().isoformat(),
+                    "age":                 age,
+                    "profession":          profession,
+                    "pays":                pays,
+                    "frequence_streaming": frequence,
+                    "connaissance_algo":   connaissance,
+                    "email_contact":       "",
+                })
+                st.session_state.step = "finished"
                 st.rerun()
 
     # ── FIN ──────────────────────────────────────
@@ -497,13 +707,30 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
         st.markdown("""
 Vos réponses ont bien été enregistrées.
 
+---
 
+**🎬 Vous souhaitez en savoir plus sur les systèmes de recommandation ?**
+
+Cette vidéo explique simplement comment fonctionnent les algorithmes de recommandation :
+👉 [Décryptage - Les algorithmes de recommandation de Spotify ? (YouTube)](https://youtu.be/yYhmsiQZgkk?si=tPwXMx0qhYHpPGPr)
+
+---
+
+**📩 Vous souhaitez recevoir les résultats de cette étude une fois publiés ?**
+
+N'hésitez pas à me contacter :
+**douaa.fredj@outlook.com**
+
+---
+
+💌 **Vous avez apprécié cette expérience ? Partagez ce lien avec votre entourage !**
+Chaque participation supplémentaire contribue à la qualité de la recherche. Merci 🙏
         """)
+
         if st.button("Nouvelle participation", use_container_width=True):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
-
 
 if __name__ == "__main__":
     main()
