@@ -341,7 +341,7 @@ les utilisateurs perçoivent et évaluent les recommandations générées par un
         st.title("❓Les systèmes de recommandation")
         st.markdown("""
 Un **système de recommandation** est un algorithme qui analyse vos préférences pour vous suggérer
-automatiquement des contenus susceptibles de vous plaire — c'est ce que font Netflix, Spotify ou
+automatiquement des contenus susceptibles de vous plaire, c'est ce que font Netflix, Spotify ou
 YouTube lorsqu'ils vous proposent des films, des musiques ou des vidéos "pour vous".
 
 Avant de commencer l'expérience, quelques questions sur votre rapport à ces systèmes.
@@ -631,7 +631,7 @@ et votre ressenti vis-à-vis de la recommandation.
                 st.session_state.current_film_idx += 1
                 st.rerun()
 
-    # ── PROFIL DÉMOGRAPHIQUE ──────────────────────
+# ── PROFIL DÉMOGRAPHIQUE ──────────────────────
     elif st.session_state.step == "profile":
         st.title("👤Votre profil")
         st.write("Dernière étape ! Quelques informations sur vous pour contextualiser les résultats de la recherche.")
@@ -643,6 +643,7 @@ et votre ressenti vis-à-vis de la recommandation.
             "35-44 ans", "45-54 ans", "55 ans et plus"
         ], index=None, key="age", horizontal=True)
 
+        st.write("")
         st.markdown("**Votre situation professionnelle**")
         profession = st.radio("", [
             "Étudiant(e)",
@@ -654,6 +655,7 @@ et votre ressenti vis-à-vis de la recommandation.
             "Autre"
         ], index=None, key="profession")
 
+        st.write("")
         st.markdown("**Votre pays de résidence**")
         pays = st.radio("", [
             "France",
@@ -661,6 +663,7 @@ et votre ressenti vis-à-vis de la recommandation.
             "Pays non européen"
         ], index=None, key="pays")
 
+        st.write("")
         st.markdown("**Fréquence d'utilisation des plateformes de streaming** (Netflix, YouTube, Spotify...)")
         frequence = st.radio("", [
             "Tous les jours",
@@ -670,6 +673,7 @@ et votre ressenti vis-à-vis de la recommandation.
             "Rarement ou jamais"
         ], index=None, key="frequence")
 
+        st.write("")
         st.markdown("**Connaissance des algorithmes de recommandation**")
         connaissance = st.radio("", [
             "Je ne sais pas du tout comment ça fonctionne",
@@ -709,10 +713,11 @@ Vos réponses ont bien été enregistrées.
 
 ---
 
-**🎬 Vous souhaitez en savoir plus sur les systèmes de recommandation ?**
+**🎙️ Vous souhaitez en savoir plus sur les algorithmes de recommandation ?**
 
-Cette vidéo explique simplement comment fonctionnent les algorithmes de recommandation :
-👉 [Décryptage - Les algorithmes de recommandation de Spotify ? (YouTube)](https://youtu.be/yYhmsiQZgkk?si=tPwXMx0qhYHpPGPr)
+Ce podcast de l'Université Paris 1 Panthéon-Sorbonne explore leur 
+fonctionnement et leurs effets :
+👉 [Les algorithmes de recommandation et les conséquences sur la santé mentale (Radio France)](https://www.radiofrance.fr/franceinfo/podcasts/les-voies-de-l-ia/les-voies-de-l-ia-2662834)
 
 ---
 
