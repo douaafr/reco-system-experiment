@@ -751,7 +751,7 @@ N'hésitez pas à me contacter : **douaa.fredj@outlook.com**
         app_url = "https://reco-system-experiment.streamlit.app"
         message = "J'ai participé à une étude scientifique sur les algorithmes de recommandation, menée par l'Université Paris 1 Panthéon-Sorbonne. N'hésitez pas à y contribuer vous aussi, votre participation enrichirait vraiment la recherche : "
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             whatsapp_url = f"https://wa.me/?text={requests.utils.quote(message + app_url)}"
             st.markdown(
@@ -762,11 +762,6 @@ N'hésitez pas à me contacter : **douaa.fredj@outlook.com**
             email_url = f"mailto:?subject=Participe à cette étude !&body={requests.utils.quote(message + app_url)}"
             st.markdown(
                 f'<a href="{email_url}"><button style="width:100%;background:#4A90D9;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">📧 E-mail</button></a>',
-                unsafe_allow_html=True
-            )
-        with col3:
-            st.markdown(
-                f'<a href="https://t.me/share/url?url={requests.utils.quote(app_url)}&text={requests.utils.quote(message)}" target="_blank"><button style="width:100%;background:#229ED9;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">✈️ Telegram</button></a>',
                 unsafe_allow_html=True
             )
 
