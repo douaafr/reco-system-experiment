@@ -85,28 +85,21 @@ def get_french_titles_bulk(movie_ids_tuple):
 # ──────────────────────────────────────────────
 # 2. ALGORITHME DE RECOMMANDATION
 # ──────────────────────────────────────────────
-def base_title(title):
+def franchise_key(title):
     """
-    Extrait le titre de base d'un film en supprimant :
-    - les chiffres (2, 3, VII...)
-    - les mots de suite (part, chapter, episode, begins, returns, rises, forever, beyond...)
-    - la ponctuation
-    Retourne une chaîne normalisée pour comparaison.
+    Retourne un frozenset des 2 premiers mots significatifs du titre.
+    Deux films partagent la même franchise si leurs clés ont au moins 1 mot en commun.
+    Ex: "Harry Potter and the Sorcerer's Stone" → frozenset({"harry", "potter"})
+        "Harry Potter and the Chamber of Secrets" → frozenset({"harry", "potter"})
+        "Fast & Furious 7" → frozenset({"fast", "furious"})
+        "Furious 7" → frozenset({"furious"})
     """
-    sequel_words = {
-        "part", "chapter", "episode", "vol", "volume", "ii", "iii", "iv",
-        "vi", "vii", "viii", "ix", "xi", "xii", "begins", "returns",
-        "rises", "forever", "beyond", "resurrection", "apocalypse",
-        "reckoning", "reloaded", "revolutions", "origins", "legacy",
-        "aftermath", "endgame", "ultron", "infinity", "civil", "winter",
-        "dark", "last", "first", "new", "next", "again"
-    }
-    # Supprimer ponctuation et chiffres
-    t = re.sub(r'[^a-zA-Z\s]', ' ', title.lower())
-    words = t.split()
-    # Garder uniquement les mots significatifs (pas sequel_words, pas chiffres, longueur > 2)
-    core = [w for w in words if w not in sequel_words and len(w) > 2]
-    return " ".join(core)
+    skipwords = {"the", "and", "for", "with", "from", "a", "an",
+                 "of", "in", "to", "at", "by", "as", "its", "an"}
+    t     = re.sub(r'[^a-zA-Z\s]', ' ', title.lower())
+    words = [w for w in t.split() if len(w) > 1 and w not in skipwords]
+    return frozenset(words[:2]) if len(words) >= 2 else frozenset(words[:1])
+
 
 def get_recommendations(liked_films, df, cosine_sim, n=6):
     indices     = pd.Series(df.index, index=df["title"]).drop_duplicates()
@@ -122,22 +115,19 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
     liked_indices = [indices[f] for f in liked_films if f in indices]
     sim_series    = pd.Series(sim_scores).drop(liked_indices, errors="ignore")
 
-    # Titres de base des films aimés pour détecter les suites/franchises
-    liked_bases = [base_title(lf) for lf in liked_films]
+    # Clés de franchise des films aimés
+    liked_keys = [franchise_key(lf) for lf in liked_films]
 
     def is_same_franchise(candidate_title):
-        cb = base_title(candidate_title)
-        if not cb:
+        ck = franchise_key(candidate_title)
+        if not ck:
             return False
-        for lb in liked_bases:
-            if not lb:
-                continue
-            # Si le titre de base du candidat contient celui du film aimé ou vice versa
-            if lb in cb or cb in lb:
+        for lk in liked_keys:
+            # Même franchise si au moins 1 mot en commun dans les 2 premiers mots significatifs
+            if ck & lk:
                 return True
         return False
 
-    # Demander plus de candidats pour compenser les exclusions
     filtered_series = sim_series[
         ~sim_series.index.map(lambda i: is_same_franchise(df.iloc[i]["title"]))
     ]
