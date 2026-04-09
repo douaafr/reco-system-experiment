@@ -13,6 +13,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import ast
 import json
+import re
 
 st.set_page_config(
     page_title="Étude sur les recommandations de films",
@@ -84,6 +85,29 @@ def get_french_titles_bulk(movie_ids_tuple):
 # ──────────────────────────────────────────────
 # 2. ALGORITHME DE RECOMMANDATION
 # ──────────────────────────────────────────────
+def base_title(title):
+    """
+    Extrait le titre de base d'un film en supprimant :
+    - les chiffres (2, 3, VII...)
+    - les mots de suite (part, chapter, episode, begins, returns, rises, forever, beyond...)
+    - la ponctuation
+    Retourne une chaîne normalisée pour comparaison.
+    """
+    sequel_words = {
+        "part", "chapter", "episode", "vol", "volume", "ii", "iii", "iv",
+        "vi", "vii", "viii", "ix", "xi", "xii", "begins", "returns",
+        "rises", "forever", "beyond", "resurrection", "apocalypse",
+        "reckoning", "reloaded", "revolutions", "origins", "legacy",
+        "aftermath", "endgame", "ultron", "infinity", "civil", "winter",
+        "dark", "last", "first", "new", "next", "again"
+    }
+    # Supprimer ponctuation et chiffres
+    t = re.sub(r'[^a-zA-Z\s]', ' ', title.lower())
+    words = t.split()
+    # Garder uniquement les mots significatifs (pas sequel_words, pas chiffres, longueur > 2)
+    core = [w for w in words if w not in sequel_words and len(w) > 2]
+    return " ".join(core)
+
 def get_recommendations(liked_films, df, cosine_sim, n=6):
     indices     = pd.Series(df.index, index=df["title"]).drop_duplicates()
     sim_scores  = np.zeros(len(df))
@@ -97,7 +121,27 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
     sim_scores    = sim_scores / found_count
     liked_indices = [indices[f] for f in liked_films if f in indices]
     sim_series    = pd.Series(sim_scores).drop(liked_indices, errors="ignore")
-    top_indices   = sim_series.nlargest(n).index.tolist()
+
+    # Titres de base des films aimés pour détecter les suites/franchises
+    liked_bases = [base_title(lf) for lf in liked_films]
+
+    def is_same_franchise(candidate_title):
+        cb = base_title(candidate_title)
+        if not cb:
+            return False
+        for lb in liked_bases:
+            if not lb:
+                continue
+            # Si le titre de base du candidat contient celui du film aimé ou vice versa
+            if lb in cb or cb in lb:
+                return True
+        return False
+
+    # Demander plus de candidats pour compenser les exclusions
+    filtered_series = sim_series[
+        ~sim_series.index.map(lambda i: is_same_franchise(df.iloc[i]["title"]))
+    ]
+    top_indices = filtered_series.nlargest(n).index.tolist()
 
     user_genres     = set()
     user_keywords   = set()
@@ -241,9 +285,7 @@ SHEET_COLUMNS = [
 
 PROFILE_COLUMNS = [
     "participant_id", "timestamp_profil",
-    "age", "profession", "pays",
-    "frequence_streaming", "connaissance_algo",
-    "email_contact"
+    "age", "profession", "pays"
 ]
 
 PRE_COLUMNS = [
@@ -284,7 +326,6 @@ def save_pre(data):
         sheet.append_row(row, value_input_option="RAW")
     except Exception as e:
         st.warning(f"⚠️ Erreur sauvegarde pré-questionnaire : {e}")
-
 
 
 # ──────────────────────────────────────────────
@@ -349,7 +390,7 @@ Avant de commencer l'expérience, quelques questions sur votre rapport à ces sy
         st.divider()
 
         st.markdown("**Question 1 sur 4**")
-        st.markdown("###### Utilisez-vous des plateformes intégrant des systèmes de recommandation automatique ? (ex. Netflix, YouTube, Spotify, Amazon...)")
+        st.markdown("###### Utilisez-vous des plateformes intégrant des systèmes de recommandation ? (ex. Netflix, YouTube, Spotify, Amazon...)")
         pre1 = st.radio(
             "",
             [
@@ -605,12 +646,12 @@ et votre ressenti vis-à-vis de la recommandation.
         st.caption(f"Recommandation {idx + 1} sur {total}")
 
         if cr_display is None:
-            st.warning("Veuillez répondre au test de compréhension avant de continuer.")
+            st.warning(f"⬆️ Remontez en haut de page pour voir la recommandation {idx + 1} sur {total}, puis répondez à toutes les questions avant de continuer.")
         else:
             label = "Suivant →" if idx < total - 1 else "Terminer les recommandations →"
             clicked = st.button(label, type="primary", use_container_width=True)
             if clicked:
-                with st.spinner("Chargement en cours..." if idx < total - 1 else "Finalisation..."):
+                with st.spinner("Chargement de la recommandation suivante en cours..." if idx < total - 1 else "Finalisation..."):
                     save_response({
                     "participant_id":                    st.session_state.participant_id,
                     "timestamp":                         datetime.now().isoformat(),
@@ -631,7 +672,7 @@ et votre ressenti vis-à-vis de la recommandation.
                 st.session_state.current_film_idx += 1
                 st.rerun()
 
-# ── PROFIL DÉMOGRAPHIQUE ──────────────────────
+    # ── PROFIL DÉMOGRAPHIQUE ──────────────────────
     elif st.session_state.step == "profile":
         st.title("👤Votre profil")
         st.write("Dernière étape ! Quelques informations sur vous pour contextualiser les résultats de la recherche.")
@@ -663,43 +704,20 @@ et votre ressenti vis-à-vis de la recommandation.
             "Pays non européen"
         ], index=None, key="pays")
 
-        st.write("")
-        st.markdown("**Fréquence d'utilisation des plateformes de streaming** (Netflix, YouTube, Spotify...)")
-        frequence = st.radio("", [
-            "Tous les jours",
-            "Plusieurs fois par semaine",
-            "Une fois par semaine",
-            "Quelques fois par mois",
-            "Rarement ou jamais"
-        ], index=None, key="frequence")
-
-        st.write("")
-        st.markdown("**Connaissance des algorithmes de recommandation**")
-        connaissance = st.radio("", [
-            "Je ne sais pas du tout comment ça fonctionne",
-            "J'en ai une idée très vague",
-            "Je comprends les grandes lignes",
-            "J'ai de bonnes connaissances sur le sujet",
-            "Je suis expert(e) dans ce domaine"
-        ], index=None, key="connaissance")
-
         st.divider()
 
-        all_filled = all([age, profession, pays, frequence, connaissance])
+        all_filled = all([age, profession, pays])
 
         if not all_filled:
             st.warning("Veuillez répondre à toutes les questions avant de continuer.")
         else:
             if st.button("Terminer l'étude ✓", type="primary", use_container_width=True):
                 save_profile({
-                    "participant_id":      st.session_state.participant_id,
-                    "timestamp_profil":    datetime.now().isoformat(),
-                    "age":                 age,
-                    "profession":          profession,
-                    "pays":                pays,
-                    "frequence_streaming": frequence,
-                    "connaissance_algo":   connaissance,
-                    "email_contact":       "",
+                    "participant_id":   st.session_state.participant_id,
+                    "timestamp_profil": datetime.now().isoformat(),
+                    "age":              age,
+                    "profession":       profession,
+                    "pays":             pays,
                 })
                 st.session_state.step = "finished"
                 st.rerun()
@@ -708,6 +726,7 @@ et votre ressenti vis-à-vis de la recommandation.
     elif st.session_state.step == "finished":
         st.balloons()
         st.success("🎉 Merci pour votre participation !")
+
         st.markdown("""
 Vos réponses ont bien été enregistrées.
 
@@ -715,23 +734,43 @@ Vos réponses ont bien été enregistrées.
 
 **🎙️ Vous souhaitez en savoir plus sur les algorithmes de recommandation ?**
 
-Ce podcast de l'Université Paris 1 Panthéon-Sorbonne explore leur 
-fonctionnement et leurs effets :
-👉 [Les algorithmes de recommandation et les conséquences sur la santé mentale (Radio France)](https://www.radiofrance.fr/franceinfo/podcasts/les-voies-de-l-ia/les-voies-de-l-ia-2662834)
+Ce podcast de l'Université Paris 1 Panthéon-Sorbonne explore leur fonctionnement et leurs effets :
+👉 [Les voies de l'IA — Radio France](https://www.radiofrance.fr/franceinfo/podcasts/les-voies-de-l-ia)
 
 ---
 
 **📩 Vous souhaitez recevoir les résultats de cette étude une fois publiés ?**
 
-N'hésitez pas à me contacter :
-**douaa.fredj@outlook.com**
-
----
-
-💌 **Vous avez apprécié cette expérience ? Partagez ce lien avec votre entourage !**
-Chaque participation supplémentaire contribue à la qualité de la recherche. Merci 🙏
+N'hésitez pas à me contacter : **douaa.fredj@outlook.com**
         """)
 
+        st.divider()
+        st.markdown("💌 **Vous avez apprécié cette expérience ? Partagez-la avec votre entourage !**")
+        st.write("Chaque participation supplémentaire contribue à la qualité de la recherche. Merci 🙏")
+
+        app_url = "https://reco-system-experiment.streamlit.app"
+        message = "J'ai participé à une étude scientifique sur les algorithmes de recommandation, menée par l'Université Paris 1 Panthéon-Sorbonne. N'hésitez pas à y contribuer vous aussi, votre participation enrichirait vraiment la recherche : "
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            whatsapp_url = f"https://wa.me/?text={requests.utils.quote(message + app_url)}"
+            st.markdown(
+                f'<a href="{whatsapp_url}" target="_blank"><button style="width:100%;background:#25D366;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">💬 WhatsApp</button></a>',
+                unsafe_allow_html=True
+            )
+        with col2:
+            email_url = f"mailto:?subject=Participe à cette étude !&body={requests.utils.quote(message + app_url)}"
+            st.markdown(
+                f'<a href="{email_url}"><button style="width:100%;background:#4A90D9;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">📧 E-mail</button></a>',
+                unsafe_allow_html=True
+            )
+        with col3:
+            st.markdown(
+                f'<a href="https://t.me/share/url?url={requests.utils.quote(app_url)}&text={requests.utils.quote(message)}" target="_blank"><button style="width:100%;background:#229ED9;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">✈️ Telegram</button></a>',
+                unsafe_allow_html=True
+            )
+
+        st.divider()
         if st.button("Nouvelle participation", use_container_width=True):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
