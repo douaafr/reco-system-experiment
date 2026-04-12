@@ -129,10 +129,20 @@ def get_recommendations(liked_films, df, cosine_sim, n=6):
         return False
 
     filtered_series = sim_series[
-        ~sim_series.index.map(lambda i: is_same_franchise(df.iloc[i]["title"]))
-    ]
-    top_indices = filtered_series.nlargest(n).index.tolist()
+    ~sim_series.index.map(lambda i: is_same_franchise(df.iloc[i]["title"]))
+]
 
+    # Dédupliquer aussi les franchises entre les recommandations elles-mêmes
+    seen_franchise_keys = set()
+    top_indices = []
+    for idx in filtered_series.nlargest(n * 3).index.tolist():
+        fk = franchise_key(df.iloc[idx]["title"])
+        fk_frozen = frozenset(fk)
+        if not any(fk & seen for seen in seen_franchise_keys):
+            top_indices.append(idx)
+            seen_franchise_keys.add(fk_frozen)
+        if len(top_indices) == n:
+            break
     user_genres     = set()
     user_keywords   = set()
     liked_overviews = []
@@ -349,8 +359,8 @@ def main():
 Bienvenue et merci de participer à cette étude !
 
 Cette recherche est conduite au sein de l'Université Paris 1 Panthéon-Sorbonne.
-Elle vise à mieux comprendre comment
-les utilisateurs perçoivent et évaluent les recommandations générées par une IA.
+Elle vise à mieux comprendre comment les explications générées par une IA
+influencent la compréhension et la confiance des utilisateurs dans un système de recommandation.
 
 **Durée estimée : 8 à 10 minutes**
 
@@ -472,10 +482,17 @@ et votre ressenti vis-à-vis de la recommandation.
         sorted_df  = df.sort_values("popularity", ascending=False).reset_index(drop=True)
 
         if "french_titles" not in st.session_state:
-            with st.spinner("Chargement des films..."):
-                top_ids = tuple(int(i) for i in sorted_df["id"].head(300).tolist() if pd.notna(i))
-                st.session_state.french_titles = get_french_titles_bulk(top_ids)
-
+            st.markdown(
+                """<div style="text-align:center;padding:60px 0;">
+                <div style="font-size:48px;">🎬</div>
+                <div style="font-size:18px;font-weight:bold;margin-top:16px;">Chargement des films en cours...</div>
+                <div style="color:gray;margin-top:8px;">Merci de patienter quelques secondes</div>
+                </div>""",
+                unsafe_allow_html=True
+            )
+            top_ids = tuple(int(i) for i in sorted_df["id"].head(300).tolist() if pd.notna(i))
+            st.session_state.french_titles = get_french_titles_bulk(top_ids)
+            st.rerun()
         fr_titles = st.session_state.french_titles
         display_to_original = {}
         display_titles = []
@@ -740,10 +757,11 @@ N'hésitez pas à me contacter : **douaa.fredj@outlook.com**
 
         app_url = "https://reco-system-experiment.streamlit.app"
         message = "J'ai participé à une étude scientifique sur les algorithmes de recommandation, menée par l'Université Paris 1 Panthéon-Sorbonne. N'hésitez pas à y contribuer vous aussi, votre participation enrichirait vraiment la recherche : "
+        message_whatsapp = "Coucou ! Je viens de participer à une étude scientifique sur les algorithmes de recommandationn menée l'Université Paris 1 Panthéon-Sorbonne. C'est rapide et sympa, tu devrais y jeter un œil : "
 
         col1, col2 = st.columns(2)
         with col1:
-            whatsapp_url = f"https://wa.me/?text={requests.utils.quote(message + app_url)}"
+            whatsapp_url = f"https://wa.me/?text={requests.utils.quote(message_whatsapp + app_url)}"
             st.markdown(
                 f'<a href="{whatsapp_url}" target="_blank"><button style="width:100%;background:#25D366;color:white;border:none;padding:10px;border-radius:8px;font-size:15px;cursor:pointer;">💬 WhatsApp</button></a>',
                 unsafe_allow_html=True
