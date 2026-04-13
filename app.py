@@ -757,7 +757,7 @@ N'hésitez pas à me contacter : **douaa.fredj@outlook.com**
 
         app_url = "https://reco-system-experiment.streamlit.app"
         message = "J'ai participé à une étude scientifique sur les algorithmes de recommandation, menée par l'Université Paris 1 Panthéon-Sorbonne. N'hésitez pas à y contribuer vous aussi, votre participation enrichirait vraiment la recherche : "
-        message_whatsapp = "Coucou ! Je viens de participer à une étude scientifique sur les algorithmes de recommandationn menée l'Université Paris 1 Panthéon-Sorbonne. C'est rapide et sympa, tu devrais y jeter un œil : "
+        message_whatsapp = "Coucou ! Je viens de participer à une étude scientifique sur les algorithmes de recommandation menée l'Université Paris 1 Panthéon-Sorbonne. C'est rapide et sympa, tu devrais y jeter un œil : "
 
         col1, col2 = st.columns(2)
         with col1:
